@@ -25,6 +25,8 @@ theme_set(theme_custom)
 opening_day = as_date("2023-11-06")
 today = Sys.Date()
 season_dates = as.character(seq.Date(from = opening_day, to = today, by = 1))
+no_game_dates = c(as_date("2023-12-25"), as_date("2023-12-26"))
+season_dates = season_dates[!season_dates %in% no_game_dates]
 
 # res = read_csv("data/end_games.csv", show_col_types = F)
 
@@ -58,9 +60,6 @@ team_records = data.frame(team = all_teams) |>
          games = wins + losses,
          win_pct = round(wins / games, 3)) |>
   arrange(desc(win_pct), desc(wins))
-
-team_records |>
-  filter(games >= 8)
 ```
 
 ```{r}
@@ -94,7 +93,7 @@ team_ppg |>
   mutate(top_lab = ifelse(team %in% top3, team, "")) |>
   ggplot(aes(off_ppg, def_ppg)) +
   geom_point(aes(col = diff), show.legend = F) +
-  ggrepel::geom_text_repel(aes(label = top_lab), size = 3, fontface = "italic") +
+  ggrepel::geom_text_repel(aes(label = top_lab), size = 3, fontface = "italic", max.overlaps = 100) +
   geom_abline(linetype = "dashed", alpha = 0.25) +
   scale_color_gradient(low = "indianred3", high = "springgreen4") +
   labs(x = "Offensive PPG", y = "Defensive PPG",
@@ -229,7 +228,20 @@ sprintf("RMSE for model predicting total CPR with only defensive CPR: %s", round
 
 
 ```{r}
-ncaahoopR::ncaa_colors
+get_team_color = function(team) {
+  try1 = ncaa_colors |> filter(ncaa_name == team)
+  if (nrow(try1) > 0) return(pull(try1, primary_color))
+  try2 = ncaa_colors |> filter(espn_name == team)
+  if (nrow(try2) > 0) return(pull(try2, primary_color))
+  if (nrow(try1) == 0 & nrow(try2) == 0) return("not found")
+}
+
+team_records |>
+  filter(games >= 10) |>
+  select(team) |>
+  arrange(team) |>
+  mutate(color = sapply(team, get_team_color)) |>
+  filter(color == "not found")
 ```
 
 
@@ -392,7 +404,49 @@ for (res in today_results) {
 make_game_prediction(home = "North Carolina", away = "Marshall")
 ```
 
+### BIGGEST PLAYS IN MOST RECENT HEELS GAME
 
+```{r}
+most_recent_id = end |>
+  filter(home == "North Carolina" | away == "North Carolina") |>
+  slice_max(date, n = 1, with_ties = F) |>
+  pull(game_id)
+
+xxx = suppressMessages(get_pbp_game(game_ids = most_recent_id, extra_parse = F) |>
+  select(home, away, home_score, away_score, half, time_remaining_half, secs_remaining, description, win_prob, naive_win_prob))
+
+vec = xxx |>
+  mutate(win_prob = round(win_prob, 5),
+         naive_win_prob = round(naive_win_prob, 5),
+         wp_lag = lag(win_prob),
+         wp_delta = win_prob - wp_lag,
+         wp_delta_abs = abs(wp_delta)) |>
+  select(home, away, home_score, away_score, half, time_remaining_half, description, wp_delta_abs) |>
+  slice_max(wp_delta_abs, n = 10, with_ties = F) |>
+  # MAKE SURE EVERYTHING LOOKS RIGHT AND IF NOT MAKE SURE HOME AND AWAY ARE CORRECT
+  mutate(leader = case_when(home_score > away_score ~ away, away_score > home_score ~ home, T ~ "Tied"),
+         lead_score = case_when(home_score > away_score ~ home_score, away_score > home_score ~ away_score, T ~ home_score),
+         trail_score = case_when(home_score > away_score ~ away_score, home_score < away_score ~ home_score, T ~ away_score),
+         score = paste0(lead_score, "-", trail_score),
+         delta = round(wp_delta_abs * 100, 2),
+         str = paste0(half, "H ", time_remaining_half, " - ", description, " ", leader, " leads ", score, " (", delta, "% change)")) |>
+  pull(str)
+
+for (v in vec) {
+  print(v)
+}
+```
+
+1. `r vec[1]`
+2. `r vec[2]`
+3. `r vec[3]`
+4. `r vec[4]`
+5. `r vec[5]`
+6. `r vec[6]`
+7. `r vec[7]`
+8. `r vec[8]`
+9. `r vec[9]`
+10. `r vec[10]`
 
 
 
